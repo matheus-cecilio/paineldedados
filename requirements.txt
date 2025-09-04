@@ -1,0 +1,5 @@
+streamlit
+pandas==2.2.2
+httpx
+plotly
+openpyxl==3.1.5
