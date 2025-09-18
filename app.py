@@ -7,10 +7,12 @@ from core.supabase_db import (
     criar_planilha, adicionar_itens_planilha, listar_planilhas,
     obter_itens_planilha, excluir_planilha,
     add_item_planilha, excluir_itens_planilha, limpar_itens_planilha,
-    renomear_planilha, atualizar_item_planilha
+    renomear_planilha, atualizar_item_planilha, logout_usuario
 )
+from core.auth_manager import check_persistent_login, login_user, logout_user
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from datetime import datetime
+import pytz
 import os
 
 # Configuração da página
@@ -47,69 +49,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title('📊 Painel de Vendas')
-
-# Inicializar estado de login
+# Inicialização do estado da sessão
 if 'usuario_logado' not in st.session_state:
     st.session_state.usuario_logado = False
+if 'usuario_info' not in st.session_state:
     st.session_state.usuario_info = None
+
+# Verificar login persistente usando cookies
+if not st.session_state.usuario_logado:
+    check_persistent_login()
 
 # Função para logout
 def logout():
-    st.session_state.usuario_logado = False
-    st.session_state.usuario_info = None
-    if 'lista_vendas' in st.session_state:
-        st.session_state.lista_vendas = []
+    logout_user()
+    st.rerun()
 
-# Sidebar
-st.sidebar.title("Configurações")
+# Cabeçalho principal
+st.title('📊 Painel de Vendas')
 
-# Sistema de Login/Logout na Sidebar
-if not st.session_state.usuario_logado:
-    st.sidebar.markdown("### Login / Cadastro")
-    
-    tab_login, tab_cadastro = st.sidebar.tabs(["Login", "Cadastro"])
-    
-    with tab_login:
-        st.markdown("**Faça login para salvar dados:**")
-        email_login = st.text_input("E-mail", key="email_login")
-        senha_login = st.text_input("Senha", type="password", key="senha_login")
-        
-        if st.button("Entrar", key="btn_login"):
-            if email_login and senha_login:
-                sucesso, usuario, mensagem = autenticar_usuario(email_login, senha_login)
-                if sucesso:
-                    st.session_state.usuario_logado = True
-                    st.session_state.usuario_info = usuario
-                    st.success(mensagem)
-                    st.rerun()
-                else:
-                    st.error(mensagem)
-            else:
-                st.error("Preencha e-mail e senha")
-    
-    with tab_cadastro:
-        st.markdown("**Criar nova conta:**")
-        nome_cadastro = st.text_input("Nome", key="nome_cadastro")
-        email_cadastro = st.text_input("E-mail", key="email_cadastro")
-        senha_cadastro = st.text_input("Senha", type="password", key="senha_cadastro")
-        
-        if st.button("📝 Cadastrar", key="btn_cadastro"):
-            if nome_cadastro and email_cadastro and senha_cadastro:
-                sucesso, mensagem = criar_usuario(nome_cadastro, email_cadastro, senha_cadastro)
-                if sucesso:
-                    st.success(mensagem)
-                else:
-                    st.error(mensagem)
-            else:
-                st.error("Preencha todos os campos")
-
-else:
-    # Usuário logado
-    st.sidebar.success(f"Olá, {st.session_state.usuario_info['nome']}!")
-    if st.sidebar.button("Logout"):
-        logout()
-        st.rerun()
+# Mostrar informações do usuário se logado
+if st.session_state.usuario_logado:
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.success(f"✅ Logado como: **{st.session_state.usuario_info['nome']}** ({st.session_state.usuario_info['email']})")
+    with col2:
+        if st.button('🚪 Logout'):
+            logout()
+            st.rerun()
 
 # Instruções
 with st.sidebar.expander('Como usar o sistema'):
@@ -128,7 +94,7 @@ with st.sidebar.expander('Como usar o sistema'):
     - `quantidade`: Quantidade vendida
     - `valor unitário`: Preço por unidade
     - `data`: Data da venda (DD/MM/YYYY)
-    - `valor total`: Quantidade × Valor unitário
+    - `valor total`: Quantidade × Valor unitario
     """)
 
 st.sidebar.markdown("### Arquivos para Download")
@@ -156,6 +122,12 @@ st.sidebar.download_button(
     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     help="Planilha com dados prontos para testar o sistema"
 )
+
+# Função para obter datetime brasileiro
+def get_br_datetime():
+    """Retorna datetime atual no fuso horário do Brasil"""
+    br_tz = pytz.timezone('America/Sao_Paulo')
+    return datetime.now(br_tz)
 
 # SEÇÃO 1: UPLOAD E ANÁLISE DE PLANILHAS
 st.header("Upload de planilha de vendas (XLSX / CSV)")
@@ -210,7 +182,7 @@ if uploaded is not None:
                 st.plotly_chart(fig, use_container_width=True)
         
         # Gerar PDF somente (não salva uploads no banco)
-        if st.session_state.usuario_logado and 'produto' in df_standardized.columns:
+        if 'produto' in df_standardized.columns:
             st.subheader('Gerar PDF')
             colp2, _ = st.columns([2,3])
 
@@ -229,7 +201,7 @@ if uploaded is not None:
                             })
                         outdir = 'uploads'
                         os.makedirs(outdir, exist_ok=True)
-                        invoice_no = datetime.now().strftime('%Y%m%d%H%M%S')
+                        invoice_no = get_br_datetime().strftime('%Y%m%d%H%M%S')
                         outpath = os.path.join(outdir, f'nota_{invoice_no}.pdf')
                         generate_invoice_pdf(invoice_no, sel_customer, items_for_pdf, outpath)
                         with open(outpath,'rb') as f:
@@ -242,9 +214,49 @@ if uploaded is not None:
     except Exception as e:
         st.error(f'❌ Erro ao processar arquivo: {e}')
 
+# SEÇÃO 2: LOGIN (somente se não logado)
 if not st.session_state.usuario_logado:
-    st.header("🔐 Login Necessário")
-    st.info("Faça login para usar a área de Planilhas")
+    st.header("🔐 Login")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Entrar")
+        with st.form("form_login"):
+            email = st.text_input("Email")
+            senha = st.text_input("Senha", type="password")
+            submitted = st.form_submit_button("Entrar")
+            
+            if submitted:
+                if email and senha:
+                    sucesso, mensagem = login_user(email, senha)
+                    if sucesso:
+                        st.success(f"✅ {mensagem}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {mensagem}")
+                else:
+                    st.error("❌ Preencha todos os campos")
+    
+    with col2:
+        st.subheader("Cadastrar")
+        with st.form("form_cadastro"):
+            nome_cad = st.text_input("Nome completo")
+            email_cad = st.text_input("Email")
+            senha_cad = st.text_input("Senha", type="password")
+            submitted_cad = st.form_submit_button("Cadastrar")
+            
+            if submitted_cad:
+                if nome_cad and email_cad and senha_cad:
+                    sucesso, mensagem = criar_usuario(nome_cad, email_cad, senha_cad)
+                    if sucesso:
+                        st.success(f"✅ {mensagem}")
+                        st.info("Agora você pode fazer login!")
+                    else:
+                        st.error(f"❌ {mensagem}")
+                else:
+                    st.error("❌ Preencha todos os campos")
+
+# SEÇÃO 3: ÁREA DE PLANILHAS (somente se logado)
 if st.session_state.usuario_logado:
     st.header('🗂️ Planilhas')
 
@@ -280,7 +292,7 @@ if st.session_state.usuario_logado:
         with cpi4:
             p_cliente = st.text_input('Cliente (opcional)', key='pb_cli')
         with cpi5:
-            p_data = st.date_input('Data', value=datetime.now().date(), format='DD/MM/YYYY', key='pb_data')
+            p_data = st.date_input('Data', value=get_br_datetime().date(), format='DD/MM/YYYY', key='pb_data')
 
         if st.button('Adicionar ao rascunho'):
             # parse entradas texto
@@ -311,11 +323,12 @@ if st.session_state.usuario_logado:
 
         # Interface simplificada para editar rascunho
         draft_items = st.session_state.planilha_builder['itens']
+        items_to_remove = []  # Inicializar sempre, fora do if
+        
         if draft_items:
             st.subheader('Editar itens do rascunho')
             
             # Lista de items para editar
-            items_to_remove = []
             for i, item in enumerate(draft_items):
                 with st.expander(f"Item {i+1}: {item.get('produto', 'Produto')} - R$ {item.get('valor_total', 0):.2f}"):
                     col1, col2 = st.columns([4, 1])
@@ -328,16 +341,6 @@ if st.session_state.usuario_logado:
                             new_qtd = st.text_input('Quantidade:', value=str(item.get('quantidade', '')), key=f'edit_qtd_{i}')
                         with c3:
                             new_preco = st.text_input('Preço:', value=str(item.get('preco_unitario', '')), key=f'edit_preco_{i}')
-                        
-                        c4, c5 = st.columns(2)
-                        with c4:
-                            new_cliente = st.text_input('Cliente:', value=item.get('cliente', '') or '', key=f'edit_cli_{i}')
-                        with c5:
-                            try:
-                                data_val = pd.to_datetime(item.get('data')).date() if item.get('data') else datetime.now().date()
-                            except:
-                                data_val = datetime.now().date()
-                            new_data = st.date_input('Data:', value=data_val, key=f'edit_data_{i}')
                     
                     with col2:
                         st.markdown("**Ações:**")
@@ -361,99 +364,99 @@ if st.session_state.usuario_logado:
                                 'quantidade': qtd_parsed,
                                 'preco_unitario': preco_parsed,
                                 'valor_total': float(qtd_parsed) * float(preco_parsed),
-                                'cliente': new_cliente or None,
-                                'data': new_data.strftime('%Y-%m-%d')
+                                'cliente': item.get('cliente'),  # Manter cliente original
+                                'data': item.get('data')  # Manter data original
                             }
                             st.success(f'Item {i+1} atualizado!')
                             st.rerun()
-            
-            # Processar exclusões
-            if items_to_remove:
-                for i in reversed(sorted(items_to_remove)):
-                    st.session_state.planilha_builder['itens'].pop(i)
-                st.success(f'Removido(s) {len(items_to_remove)} item(ns)')
-                st.rerun()
-            
-            # Resumo
-            if draft_items:
-                total_items = len(draft_items)
-                total_valor = sum(item.get('valor_total', 0) for item in draft_items)
-                st.info(f"**Resumo:** {total_items} itens - Valor total: R$ {total_valor:.2f}")
+        
+        # Processar exclusões
+        if items_to_remove:
+            for i in reversed(sorted(items_to_remove)):
+                st.session_state.planilha_builder['itens'].pop(i)
+            st.success(f'Removido(s) {len(items_to_remove)} item(ns)')
+            st.rerun()
+        
+        # Resumo
+        if draft_items:
+            total_items = len(draft_items)
+            total_valor = sum(item.get('valor_total', 0) for item in draft_items)
+            st.info(f"**Resumo:** {total_items} itens - Valor total: R$ {total_valor:.2f}")
 
-            sel2 = []  # Não usa mais AgGrid
-            cba, cbb, cbc = st.columns(3)
-            with cba:
-                if st.button('Remover selecionados do rascunho'):
-                    if sel2:
-                        idxs_to_remove = sorted([int(r.get('idx', -1)) for r in sel2 if r.get('idx') is not None], reverse=True)
-                        for idx in idxs_to_remove:
-                            if 0 <= idx < len(st.session_state.planilha_builder['itens']):
-                                st.session_state.planilha_builder['itens'].pop(idx)
-                        st.success(f"Removido(s) {len(idxs_to_remove)} item(ns) da lista")
-                        st.rerun()
-                    else:
-                        st.info('Selecione uma ou mais linhas para remover')
-            with cbb:
-                if st.button('Limpar rascunho'):
-                    st.session_state.planilha_builder['itens'] = []
+        sel2 = []  # Não usa mais AgGrid
+        cba, cbb, cbc = st.columns(3)
+        with cba:
+            if st.button('Remover selecionados do rascunho'):
+                if sel2:
+                    idxs_to_remove = sorted([int(r.get('idx', -1)) for r in sel2 if r.get('idx') is not None], reverse=True)
+                    for idx in idxs_to_remove:
+                        if 0 <= idx < len(st.session_state.planilha_builder['itens']):
+                            st.session_state.planilha_builder['itens'].pop(idx)
+                    st.success(f"Removido(s) {len(idxs_to_remove)} item(ns) da lista")
                     st.rerun()
-            with cbc:
-                clientes_draft = [c for c in pd.Series([r.get('cliente') for r in draft_items]).dropna().unique().tolist() if c]
-                cliente_opts = ['Todos'] + clientes_draft if clientes_draft else ['Todos']
-                selc = st.selectbox('Cliente para PDF (rascunho)', options=cliente_opts, key='pb_pdf_cli')
-                if st.button('🧾 Gerar PDF do rascunho'):
-                    items_for_pdf = []
-                    for r in draft_items:
-                        if selc == 'Todos' or r.get('cliente') == selc:
-                            items_for_pdf.append({
-                                'description': r.get('produto', 'Produto'),
-                                'quantity': r.get('quantidade', 1),
-                                'unit_price': r.get('preco_unitario', 0)
-                            })
-                    outdir = 'uploads'
-                    os.makedirs(outdir, exist_ok=True)
-                    invoice_no = datetime.now().strftime('%Y%m%d%H%M%S')
-                    outpath = os.path.join(outdir, f'nota_{invoice_no}.pdf')
-                    title = st.session_state.planilha_builder.get('nome') or 'Todos'
-                    generate_invoice_pdf(invoice_no, title if selc=='Todos' else selc, items_for_pdf, outpath)
-                    with open(outpath,'rb') as f:
-                        pdf_data = f.read()
-                    st.download_button('Baixar PDF', data=pdf_data, file_name=f'nota_{selc}_{invoice_no}.pdf', mime='application/pdf')
-                    st.success('✅ PDF gerado com sucesso!')
+                else:
+                    st.info('Selecione uma ou mais linhas para remover')
+        with cbb:
+            if st.button('Limpar rascunho'):
+                st.session_state.planilha_builder['itens'] = []
+                st.rerun()
+        with cbc:
+            clientes_draft = [c for c in pd.Series([r.get('cliente') for r in draft_items]).dropna().unique().tolist() if c]
+            cliente_opts = ['Todos'] + clientes_draft if clientes_draft else ['Todos']
+            selc = st.selectbox('Cliente para PDF (rascunho)', options=cliente_opts, key='pb_pdf_cli')
+            if st.button('🧾 Gerar PDF do rascunho'):
+                items_for_pdf = []
+                for r in draft_items:
+                    if selc == 'Todos' or r.get('cliente') == selc:
+                        items_for_pdf.append({
+                            'description': r.get('produto', 'Produto'),
+                            'quantity': r.get('quantidade', 1),
+                            'unit_price': r.get('preco_unitario', 0)
+                        })
+                outdir = 'uploads'
+                os.makedirs(outdir, exist_ok=True)
+                invoice_no = get_br_datetime().strftime('%Y%m%d%H%M%S')
+                outpath = os.path.join(outdir, f'nota_{invoice_no}.pdf')
+                title = st.session_state.planilha_builder.get('nome') or 'Todos'
+                generate_invoice_pdf(invoice_no, title if selc=='Todos' else selc, items_for_pdf, outpath)
+                with open(outpath,'rb') as f:
+                    pdf_data = f.read()
+                st.download_button('Baixar PDF', data=pdf_data, file_name=f'nota_{selc}_{invoice_no}.pdf', mime='application/pdf')
+                st.success('✅ PDF gerado com sucesso!')
 
-            st.markdown('---')
-            csa, csb = st.columns(2)
-            with csa:
-                nome_save = st.text_input('Nome da planilha para salvar', value=st.session_state.planilha_builder.get('nome') or '')
-                if st.button('💾 Salvar como NOVA planilha'):
-                    if not nome_save.strip():
-                        st.error('Informe um nome')
-                    else:
-                        uid = st.session_state.usuario_info['id']
-                        ok, pid, msg = criar_planilha(uid, nome_save)
-                        if ok and pid:
-                            ok2, count, msg2 = adicionar_itens_planilha(uid, pid, st.session_state.planilha_builder['itens'])
-                            if ok2:
-                                st.success(f"Planilha criada, itens: {count}")
-                                st.session_state.planilha_builder['planilha_id'] = pid
-                                st.session_state.planilha_builder['nome'] = nome_save
-                            else:
-                                st.error(f"Planilha criada mas erro ao inserir itens: {msg2}")
-                        else:
-                            st.error(msg)
-            with csb:
-                plans_for_append = listar_planilhas(st.session_state.usuario_info['id'])
-                options = ['(selecionar)'] + [p['nome'] for p in plans_for_append] if plans_for_append else ['(selecionar)']
-                target = st.selectbox('Anexar rascunho à planilha', options=options)
-                if st.button('➕ Anexar itens ao selecionado') and target != '(selecionar)':
-                    pid_append = next((p['id'] for p in plans_for_append if p['nome'] == target), None)
-                    if pid_append:
-                        uid = st.session_state.usuario_info['id']
-                        ok2, count, msg2 = adicionar_itens_planilha(uid, pid_append, st.session_state.planilha_builder['itens'])
+        st.markdown('---')
+        csa, csb = st.columns(2)
+        with csa:
+            nome_save = st.text_input('Nome da planilha para salvar', value=st.session_state.planilha_builder.get('nome') or '')
+            if st.button('💾 Salvar como NOVA planilha'):
+                if not nome_save.strip():
+                    st.error('Informe um nome')
+                else:
+                    uid = st.session_state.usuario_info['id']
+                    ok, pid, msg = criar_planilha(uid, nome_save)
+                    if ok and pid:
+                        ok2, count, msg2 = adicionar_itens_planilha(uid, pid, st.session_state.planilha_builder['itens'])
                         if ok2:
-                            st.success(f"Itens anexados: {count}")
+                            st.success(f"Planilha criada, itens: {count}")
+                            st.session_state.planilha_builder['planilha_id'] = pid
+                            st.session_state.planilha_builder['nome'] = nome_save
                         else:
-                            st.error(msg2)
+                            st.error(f"Planilha criada mas erro ao inserir itens: {msg2}")
+                    else:
+                        st.error(msg)
+        with csb:
+            plans_for_append = listar_planilhas(st.session_state.usuario_info['id'])
+            options = ['(selecionar)'] + [p['nome'] for p in plans_for_append] if plans_for_append else ['(selecionar)']
+            target = st.selectbox('Anexar rascunho à planilha', options=options)
+            if st.button('➕ Anexar itens ao selecionado') and target != '(selecionar)':
+                pid_append = next((p['id'] for p in plans_for_append if p['nome'] == target), None)
+                if pid_append:
+                    uid = st.session_state.usuario_info['id']
+                    ok2, count, msg2 = adicionar_itens_planilha(uid, pid_append, st.session_state.planilha_builder['itens'])
+                    if ok2:
+                        st.success(f"Itens anexados: {count}")
+                    else:
+                        st.error(msg2)
 
     # ---------------- SALVAS ----------------
     with tab_saved:
@@ -488,7 +491,7 @@ if st.session_state.usuario_logado:
                 ap_qtd_txt = st.text_input('Qtd', value='', placeholder='ex: 2,5', key='ap_qtd')
                 ap_preco_txt = st.text_input('Preço', value='', placeholder='ex: 19,90', key='ap_preco')
                 ap_cli = st.text_input('Cliente', key='ap_cli')
-                ap_data = st.date_input('Data', value=datetime.now().date(), format='DD/MM/YYYY', key='ap_data')
+                ap_data = st.date_input('Data', value=get_br_datetime().date(), format='DD/MM/YYYY', key='ap_data')
                 if st.button('Adicionar') and ap_prod:
                     def _to_float_saved(txt):
                         if txt is None:
@@ -548,14 +551,19 @@ if st.session_state.usuario_logado:
                             except Exception:
                                 return 0.0
                         
-                        qtd = _parse_display_num(qtd_val)
-                        preco = _parse_display_num(preco_val)
-                        return qtd * preco
+                        # Calcular o total multiplicando quantidade por preço
+                        qtd_num = _parse_display_num(qtd_val)
+                        preco_num = _parse_display_num(preco_val)
+                        return qtd_num * preco_num
                     
                     # Usar valores dos campos de entrada se existirem, senão usar valores do banco
                     qtd_current = st.session_state.get(f'saved_qtd_{item_id}', str(item.get('quantidade', '')))
                     preco_current = st.session_state.get(f'saved_preco_{item_id}', str(item.get('preco_unitario', '')))
                     valor_total_atual = _calc_total_display(qtd_current, preco_current)
+                    
+                    # Garantir que valor_total_atual nunca seja None
+                    if valor_total_atual is None:
+                        valor_total_atual = 0.0
                     
                     with st.expander(f"Item {i+1}: {item.get('produto', 'Produto')} - R$ {valor_total_atual:.2f}"):
                         col1, col2 = st.columns([4, 1])
@@ -568,21 +576,21 @@ if st.session_state.usuario_logado:
                                 new_qtd = st.text_input('Quantidade:', value=str(item.get('quantidade', '')), key=f'saved_qtd_{item_id}')
                             with c3:
                                 new_preco = st.text_input('Preço:', value=str(item.get('preco_unitario', '')), key=f'saved_preco_{item_id}')
-                            
-                            c4, c5 = st.columns(2)
-                            with c4:
-                                new_cliente = st.text_input('Cliente:', value=item.get('cliente', '') or '', key=f'saved_cli_{item_id}')
-                            with c5:
-                                try:
-                                    data_val = pd.to_datetime(item.get('data_venda')).date() if item.get('data_venda') else datetime.now().date()
-                                except:
-                                    data_val = datetime.now().date()
-                                new_data = st.date_input('Data:', value=data_val, key=f'saved_data_{item_id}')
-                            
-                            # Mostrar cálculo em tempo real
-                            valor_calc = _calc_total_display(new_qtd, new_preco)
-                            st.info(f"**Valor Total:** R$ {valor_calc:.2f}")
                         
+                        c4, c5 = st.columns(2)
+                        with c4:
+                            new_cliente = st.text_input('Cliente:', value=item.get('cliente', '') or '', key=f'saved_cli_{item_id}')
+                        with c5:
+                            try:
+                                data_val = pd.to_datetime(item.get('data_venda')).date() if item.get('data_venda') else get_br_datetime().date()
+                            except:
+                                data_val = get_br_datetime().date()
+                            new_data = st.date_input('Data:', value=data_val, key=f'saved_data_{item_id}')
+                        
+                        # Mostrar cálculo em tempo real
+                        valor_calc = _calc_total_display(new_qtd, new_preco)
+                        st.info(f"**Valor Total:** R$ {valor_calc:.2f}")
+                    
                         with col2:
                             st.markdown("**Ações:**")
                             if st.button(f'💾 Salvar', key=f'save_saved_{item_id}', type="primary"):
@@ -675,7 +683,7 @@ if st.session_state.usuario_logado:
                                 })
                         outdir = 'uploads'
                         os.makedirs(outdir, exist_ok=True)
-                        invoice_no = datetime.now().strftime('%Y%m%d%H%M%S')
+                        invoice_no = get_br_datetime().strftime('%Y%m%d%H%M%S')
                         outpath = os.path.join(outdir, f'nota_{invoice_no}.pdf')
                         generate_invoice_pdf(invoice_no, nome_atual if selc2=='Todos' else selc2, items_for_pdf, outpath)
                         with open(outpath,'rb') as f:

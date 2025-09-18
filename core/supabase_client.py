@@ -33,4 +33,5 @@ def _validate_env(url: str, key: str):
 def get_supabase() -> Client:
     _validate_env(SUPABASE_URL, SUPABASE_KEY)
     url = _normalize_url(SUPABASE_URL)
+    # Criar cliente simples sem options problemáticas
     return create_client(url, SUPABASE_KEY)

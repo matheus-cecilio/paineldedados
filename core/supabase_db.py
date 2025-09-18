@@ -1,4 +1,5 @@
 from core.supabase_client import get_supabase
+import streamlit as st
 
 def inserir_venda(produto, quantidade, preco_unitario, cliente=None, numero_nota=None, data=None, usuario_id=None):
     """Insere uma venda via RPC segura (SECURITY DEFINER)."""
@@ -48,19 +49,45 @@ def criar_usuario(nome, email, senha):
         supabase = get_supabase()
         
         # Usar a função criar_usuario do banco
-        response = supabase.rpc('criar_usuario', {
-            'input_nome': nome,
-            'input_email': email,
-            'input_senha': senha
-        }).execute()
+        try:
+            response = supabase.rpc('criar_usuario', {
+                'input_nome': nome,
+                'input_email': email,
+                'input_senha': senha
+            }).execute()
+        except Exception as rpc_error:
+            print(f"Erro na chamada RPC criar_usuario: {str(rpc_error)}")
+            return False, f"Erro de conexão com banco: {str(rpc_error)}"
         
-        if response.data and len(response.data) > 0 and response.data[0]['success']:
-            return True, response.data[0]['message']
+        # Tratar diferentes tipos de resposta
+        data = None
+        if hasattr(response, 'data'):
+            data = response.data
+        elif isinstance(response, dict) and 'data' in response:
+            data = response['data']
+        elif isinstance(response, list):
+            data = response
         else:
-            message = response.data[0]['message'] if response.data and len(response.data) > 0 else "Erro desconhecido"
-            return False, message
+            print(f"Tipo de resposta inesperado no criar_usuario: {type(response)}")
+            print(f"Conteúdo da resposta: {response}")
+            return False, "Formato de resposta inesperado"
+        
+        # Verificar se temos dados válidos
+        if data and len(data) > 0:
+            primeiro_item = data[0]
+            if isinstance(primeiro_item, dict) and primeiro_item.get('success'):
+                return True, primeiro_item.get('message', 'Usuário criado com sucesso!')
+            else:
+                message = primeiro_item.get('message', 'Erro ao criar usuário') if isinstance(primeiro_item, dict) else 'Erro desconhecido'
+                return False, message
+        else:
+            return False, "Resposta vazia do servidor"
+            
     except Exception as e:
-        return False, f"Erro: {str(e)}"
+        print(f"Erro geral ao criar usuário: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, f"Erro inesperado: {str(e)}"
 
 def autenticar_usuario(email, senha):
     """Autentica usuário usando função segura do banco"""
@@ -68,23 +95,67 @@ def autenticar_usuario(email, senha):
         supabase = get_supabase()
         
         # Usar a função login_user do banco
-        response = supabase.rpc('login_user', {
-            'input_email': email,
-            'input_password': senha
-        }).execute()
+        try:
+            response = supabase.rpc('login_user', {
+                'input_email': email,
+                'input_password': senha
+            }).execute()
+        except Exception as rpc_error:
+            print(f"Erro na chamada RPC: {str(rpc_error)}")
+            return False, None, f"Erro de conexão com banco: {str(rpc_error)}"
         
-        if response.data and len(response.data) > 0 and response.data[0]['success']:
-            user = {
-                'id': response.data[0]['user_id'],
-                'nome': response.data[0]['user_name'],
-                'email': response.data[0]['user_email']
-            }
-            return True, user, response.data[0]['message']
+        # Tratar diferentes tipos de resposta
+        data = None
+        if hasattr(response, 'data'):
+            data = response.data
+        elif isinstance(response, dict) and 'data' in response:
+            data = response['data']
+        elif isinstance(response, list):
+            data = response
         else:
-            message = response.data[0]['message'] if response.data and len(response.data) > 0 else "E-mail ou senha incorretos"
-            return False, None, message
+            print(f"Tipo de resposta inesperado: {type(response)}")
+            print(f"Conteúdo da resposta: {response}")
+            return False, None, "Formato de resposta inesperado"
+        
+        # Verificar se temos dados válidos
+        if data and len(data) > 0:
+            primeiro_item = data[0]
+            if isinstance(primeiro_item, dict) and primeiro_item.get('success'):
+                user = {
+                    'id': primeiro_item.get('user_id'),
+                    'nome': primeiro_item.get('user_name', 'Usuário'),
+                    'email': primeiro_item.get('user_email', email)
+                }
+                # Salva no session state para manter login após reload
+                st.session_state.user_authenticated = True
+                st.session_state.user_id = user['id']
+                st.session_state.user_email = user['email']
+                st.session_state.user_nome = user['nome']
+                
+                return True, user, primeiro_item.get('message', 'Login realizado com sucesso!')
+            else:
+                message = primeiro_item.get('message', 'E-mail ou senha incorretos') if isinstance(primeiro_item, dict) else 'Credenciais inválidas'
+                return False, None, message
+        else:
+            return False, None, "Resposta vazia do servidor"
+            
     except Exception as e:
-        return False, None, f"Erro: {str(e)}"
+        print(f"Erro geral na autenticação: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, None, f"Erro inesperado: {str(e)}"
+
+def logout_usuario():
+    """Faz logout e limpa a sessão"""
+    # Limpa o session state
+    if 'user_authenticated' in st.session_state:
+        del st.session_state.user_authenticated
+    if 'user_id' in st.session_state:
+        del st.session_state.user_id
+    if 'user_email' in st.session_state:
+        del st.session_state.user_email
+    if 'user_nome' in st.session_state:
+        del st.session_state.user_nome
 
 # -------------------------------
 # Planilhas (metadados e itens)
@@ -250,3 +321,5 @@ def atualizar_item_planilha(usuario_id, planilha_id, item_id, produto, quantidad
         return False, msg
     except Exception as e:
         return False, f"Erro: {str(e)}"
+
+

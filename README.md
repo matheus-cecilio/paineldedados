@@ -45,15 +45,12 @@ Sistema interativo para análise de vendas, upload de planilhas Excel/CSV, gera�
    ```cmd
    .venv\Scripts\activate
    python -m streamlit run app.py
-   ```
-
-2. **Opção 2 - Usar caminho completo (sempre funciona):**
-   ```cmd
-   ".venv\Scripts\python.exe" -m streamlit run app.py
+   ou
+   .venv\Scripts\python.exe" -m streamlit run app.py
    ou
    streamlit run app.py
    ```
-3. Acesse o painel pelo navegador, normalmente em [http://localhost:8501](http://localhost:8501)
+2. Acesse o painel pelo navegador, normalmente em [http://localhost:8501](http://localhost:8501)
 
 ## Observações
 - As planilhas enviadas não são salvas no banco de dados, apenas processadas localmente.
